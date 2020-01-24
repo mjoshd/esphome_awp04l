@@ -1,0 +1,215 @@
+# ##################################
+# AWP04L plug w/ power monitoring
+# ##################################
+# Mapping:
+#  17 - Button1 **inverted
+#  21 - Relay1
+#  56 - Led1i **power led, inverted
+# 131 - HLWBL SELi **SEL pin, inverted
+# 132 - HLWBL CF1
+# 133 - HLW8012 CF
+# 158 - LedLinki **status led, inverted
+# ##################################
+
+
+
+substitutions:
+  # https://esphome.io/guides/configuration-types.html#substitutions
+  device_name: awp04l     # used internally.. e.g. living_room_lamp
+  friendly_name: AWP04L   # displayed in HA.. e.g. Living Room Lamp
+  switch_icon: "mdi:flash"
+  sensor_icon: "mdi:flash-red-eye"
+  static_ip: !secret awp04l_ip
+  update_interval: 3s
+  min_amps: "0.01" # report values less than this number as "0"
+  min_watts: "1.5" # report values less than this number as "0"
+
+
+esphome:
+  # https://esphome.io/components/esphome
+  name: ${device_name}
+  platform: ESP8266
+  board: esp01_1m
+
+
+
+wifi:
+  # https://esphome.io/components/wifi
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  manual_ip:
+    static_ip: ${static_ip}
+    gateway: !secret wifi_gateway
+    subnet: !secret wifi_subnet
+    dns1: !secret wifi_dns1
+
+
+
+# web_server:
+#   port: 80
+  # https://esphomelib.com/esphomeyaml/components/web_server.html
+
+
+
+logger:
+  # https://esphome.io/components/logger
+
+
+
+api:
+  password: !secret esphome_api_password
+  # https://esphome.io/components/api
+
+
+
+ota:
+  password: !secret esphome_ota_password
+  # https://esphome.io/components/ota
+
+
+
+binary_sensor:
+  - platform: gpio
+    # https://esphome.io/components/binary_sensor/gpio.html
+    pin:
+      number: GPIO13
+      inverted: True
+    id: button
+    name: ${friendly_name} Button
+    on_press:
+      - switch.toggle: relay
+    internal: True
+
+
+
+sensor:
+  - platform: hlw8012
+    # https://esphome.io/components/sensor/hlw8012.html
+    # current, power, voltage can all use sensor options https://esphome.io/components/sensor/#config-sensor
+    sel_pin: 
+      number: GPIO3
+      inverted: True
+    cf_pin: GPIO5
+    cf1_pin: GPIO14
+    current:
+      # name: ${friendly_name} Current
+      id: ${device_name}_current
+      icon: ${sensor_icon}
+      filters:
+        - calibrate_polynomial:
+            degree: 4
+            datapoints:
+            # Map number from logs to number from kill-a-watt
+            - 0.0 -> 0.0
+            - 0.94 -> 0.83
+            - 4.00 -> 3.53
+            - 5.55 -> 5.22
+            - 7.92 -> 6.86
+    power:
+      # name: ${friendly_name} Power
+      id: ${device_name}_power
+      icon: ${sensor_icon}
+      filters:
+        # - multiply: 0.4545
+        - calibrate_polynomial:
+            degree: 4
+            datapoints:
+            # # Map number from logs to number from kill-a-watt
+            - 0.0 -> 0.0
+            - 544.8 -> 100.0
+            - 2205.0 -> 418.0
+            - 2850.0 -> 550.0
+            - 3930.0 -> 785.0
+    voltage:
+      name: ${friendly_name} Voltage
+      icon: ${sensor_icon}
+      filters:
+        - calibrate_polynomial:
+            degree: 4
+            datapoints:
+            # # Map number from logs to number from kill-a-watt
+            - 0.0 -> 0.0
+            - 255.8 -> 115.2
+            - 269.5 -> 117.2
+            - 278.0 -> 118.2
+            - 297.7 -> 120.3
+    change_mode_every: 3 # default 8
+    update_interval: ${update_interval} # default 60s
+
+
+  - platform: template
+    # https://esphome.io/components/sensor/template.html
+    name: ${friendly_name} Current
+    icon: ${sensor_icon}
+    unit_of_measurement: "A"
+    accuracy_decimals: 2
+    lambda: |-
+      if (id(${device_name}_current).state >= ${min_amps}) {
+        return id(${device_name}_current).state;
+      } else {
+        return 0.0;
+      }
+    update_interval: ${update_interval}
+
+
+  - platform: template
+    # https://esphome.io/components/sensor/template.html
+    name: ${friendly_name} Power
+    icon: ${sensor_icon}
+    unit_of_measurement: "W"
+    accuracy_decimals: 1
+    lambda: |-
+      if (id(${device_name}_power).state >= ${min_watts}) {
+        return id(${device_name}_power).state;
+      } else {
+        return 0.0;
+      }
+    update_interval: ${update_interval}
+
+
+  - platform: total_daily_energy
+    # https://esphome.io/components/sensor/total_daily_energy.html
+    name: ${friendly_name} Total Daily Energy
+    power_id: ${device_name}_power
+    icon: ${sensor_icon}
+    filters:
+      - multiply: 0.001   # convert Wh to kWh
+    unit_of_measurement: kWh
+
+
+
+status_led:
+  # https://esphome.io/components/status_led
+  pin:
+    number: GPIO15 #2 # Blue LED
+    inverted: True
+
+
+
+switch:
+  - platform: gpio
+    # https://esphome.io/components/switch/gpio
+    id: button_led
+    pin:
+      number: GPIO0 # Red LED
+      inverted: True
+
+
+  - platform: gpio
+    # https://esphome.io/components/switch/gpio
+    pin: GPIO12
+    name: ${friendly_name}
+    icon: ${switch_icon}
+    id: relay
+    # Tie button_led to relay
+    on_turn_on:
+    - switch.turn_on: button_led
+    on_turn_off:
+    - switch.turn_off: button_led
+
+
+
+time:
+  - platform: homeassistant
+    # https://esphome.io/components/time
+    id: homeassistant_time
